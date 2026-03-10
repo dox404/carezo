@@ -8,12 +8,17 @@ const configuredApiUrl = import.meta.env.VITE_API_URL?.trim()
 
 const api = axios.create({
   baseURL: isLocalHost ? LOCAL_API_URL : (configuredApiUrl || PROD_API_URL),
-  headers: { 'Content-Type': 'application/json' }
+  headers: { 'Content-Type': 'application/json' },
+  withCredentials: true
 })
+
+let isHandlingLogout = false
 
 api.interceptors.request.use(config => {
   const token = localStorage.getItem('carezo_token')
-  if (token) config.headers.Authorization = `Bearer ${token}`
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
   return config
 })
 
@@ -38,14 +43,34 @@ api.interceptors.response.use(
     return res
   },
   err => {
+    // Prevent multiple simultaneous logouts
+    if (isHandlingLogout) {
+      return Promise.reject(err)
+    }
+
     if (err.response?.status === 401) {
+      isHandlingLogout = true
       const role = JSON.parse(localStorage.getItem('carezo_user') || 'null')?.role
+      
+      console.warn('[AUTH] 401 Unauthorized - Logging out', {
+        status: err.response.status,
+        endpoint: err.config?.url,
+        role: role
+      })
+      
       localStorage.removeItem('carezo_token')
       localStorage.removeItem('carezo_user')
-      window.location.href =
+      
+      const loginUrl =
         role === 'admin' ? '/admin/login' :
         role === 'distributor' ? '/distributor/login' :
         '/dealer/login'
+      
+      // Add a small delay to prevent race conditions
+      setTimeout(() => {
+        window.location.href = loginUrl
+        isHandlingLogout = false
+      }, 100)
     }
     return Promise.reject(err)
   }
